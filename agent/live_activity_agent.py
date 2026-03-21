@@ -1,135 +1,57 @@
-import time
+import streamlit as st
 import requests
-import random
-from datetime import datetime
-from threading import Thread
+import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
-# -------------------------------
-# Optional: file monitoring
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+API_BASE = "http://127.0.0.1:8000"
 
-# -------------------------------
-# Optional: process monitoring
-import psutil
+st.set_page_config(layout="wide")
+st.title("🚨 AI-Powered Insider Threat Detection – Real-Time Dashboard")
 
-# -------------------------------
-# Optional: keyboard/mouse activity
-from pynput import keyboard, mouse
+# 🔁 Auto refresh every 2 seconds
+st_autorefresh(interval=2000, key="realtime")
 
-# -------------------------------
-# Config
-BACKEND_URL = "http://127.0.0.1:8000/event"
-USER_ID = "emp_007"
-
-# -------------------------------
-# Helper functions
-def is_off_hours():
-    hour = datetime.now().hour
-    return hour < 9 or hour > 18
-
-def send_event(event):
+def fetch_alerts():
     try:
-        requests.post(BACKEND_URL, json=event)
-        print("📡 Sent:", event)
+        r = requests.get(f"{API_BASE}/alerts", timeout=2)
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list):
+                return pd.DataFrame(data)
     except Exception as e:
-        print("⚠️ Failed to send:", event, e)
+        st.error(f"Backend not reachable: {e}")
+    return pd.DataFrame()
 
-# -------------------------------
-# 1️⃣ File monitoring
-class FileAccessHandler(FileSystemEventHandler):
-    def on_modified(self, event):
-        self.send_event("modified_file", event.src_path)
+alerts_df = fetch_alerts()
 
-    def on_created(self, event):
-        self.send_event("created_file", event.src_path)
+# ---------------- METRICS ----------------
+st.subheader("Live Metrics")
 
-    def on_deleted(self, event):
-        self.send_event("deleted_file", event.src_path)
+c1, c2, c3 = st.columns(3)
 
-    def send_event(self, action, file_path):
-        event = {
-            "user_id": USER_ID,
-            "action": action,
-            "file_path": file_path,
-            "off_hours": is_off_hours()
-        }
-        send_event(event)
+total = len(alerts_df)
+high = len(alerts_df[alerts_df["severity"] == "HIGH"]) if not alerts_df.empty else 0
+critical = len(alerts_df[alerts_df["severity"] == "CRITICAL"]) if not alerts_df.empty else 0
 
-def start_file_monitor(path="C:/Users/YourUsername/Documents"):
-    event_handler = FileAccessHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path, recursive=True)
-    observer.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+c1.metric("Total Alerts", total)
+c2.metric("High Risk", high)
+c3.metric("Critical", critical)
 
-# -------------------------------
-# 2️⃣ Process monitoring
-def start_process_monitor(interval=3):
-    previous = set()
-    while True:
-        current = set(p.name() for p in psutil.process_iter())
-        new_processes = current - previous
-        stopped_processes = previous - current
+# ---------------- ALERT TABLE ----------------
+st.subheader("🚨 Live Alerts")
 
-        for p in new_processes:
-            send_event({"user_id": USER_ID, "action": "start_process", "process_name": p, "off_hours": is_off_hours()})
-        for p in stopped_processes:
-            send_event({"user_id": USER_ID, "action": "stop_process", "process_name": p, "off_hours": is_off_hours()})
+if alerts_df.empty:
+    st.info("No alerts yet. System is monitoring...")
+else:
+    st.dataframe(
+        alerts_df.sort_values("timestamp", ascending=False),
+        use_container_width=True
+    )
 
-        previous = current
-        time.sleep(interval)
+# ---------------- CHART ----------------
+st.subheader("⚠️ Severity Distribution")
 
-# -------------------------------
-# 3️⃣ Keyboard & Mouse monitoring (idle vs active)
-last_activity = time.time()
+if not alerts_df.empty:
+    st.bar_chart(alerts_df["severity"].value_counts())
 
-def on_input(_):
-    global last_activity
-    last_activity = time.time()
-    send_event({"user_id": USER_ID, "action": "active", "off_hours": is_off_hours()})
-
-def start_keyboard_monitor():
-    keyboard.Listener(on_press=on_input).start()
-    mouse.Listener(on_click=on_input, on_move=on_input).start()
-    global last_activity
-    while True:
-        if time.time() - last_activity > 60:  # idle if no input > 60 sec
-            send_event({"user_id": USER_ID, "action": "idle", "off_hours": is_off_hours()})
-            last_activity = time.time()
-        time.sleep(5)
-
-# -------------------------------
-# 4️⃣ Optional: Simulated random activity
-def start_simulated_activity(interval=5):
-    actions = ["browse", "download", "upload", "delete"]
-    while True:
-        event = {
-            "user_id": USER_ID,
-            "action": random.choice(actions),
-            "off_hours": is_off_hours()
-        }
-        send_event(event)
-        time.sleep(interval)
-
-# -------------------------------
-# 5️⃣ Run all threads
-if __name__ == "__main__":
-    threads = [
-        Thread(target=start_file_monitor, args=("C:/Users/YourUsername/Documents",), daemon=True),
-        Thread(target=start_process_monitor, daemon=True),
-        Thread(target=start_keyboard_monitor, daemon=True),
-        Thread(target=start_simulated_activity, daemon=True)
-    ]
-
-    for t in threads:
-        t.start()
-
-    print("🚀 Live activity agent running...")
-    while True:
-        time.sleep(1)
+st.caption("Real-time alerts pulled from FastAPI backend")
