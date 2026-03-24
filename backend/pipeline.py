@@ -1,7 +1,7 @@
 # backend/pipeline.py
 
 from backend.risk_engine import compute_risk
-from backend.alert_engine import generate_alerts
+from backend.alert_service import generate_alerts
 
 def process_event(event: dict):
     """

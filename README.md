@@ -17,9 +17,6 @@ Python process_monitor.py
 
 
 Start Dashboard (Streamlit)
-
-
-
 Open new terminal:
 
 cd dashboard

@@ -1,37 +1,88 @@
-import joblib
-import os
+import threading
+import time
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
+model = None
+lock = threading.Lock()
 
-def train():
-    X = []
-    for _ in range(200):
-        X.append([
-            np.random.randint(5, 25),      # process_count
-            np.random.randint(2, 7),       # unique apps
-            np.random.uniform(60, 900),    # avg app time
-            np.random.randint(0, 2)        # night activity
-        ])
+# 🔥 Shared buffer (used by FastAPI)
+events_buffer = []
 
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=0.05,
-        random_state=42
-    )
-    model.fit(X)
-    joblib.dump(model, MODEL_PATH)
-    print("✅ ML model trained")
 
-def load_model():
-    if not os.path.exists(MODEL_PATH):
-        train()
-    return joblib.load(MODEL_PATH)
+# ---------------- FEATURE EXTRACTION ---------------- #
+def extract_features(events):
+    features = []
+    for e in events:
+        try:
+            features.append([
+                int(e.get("file_sensitive", False)),
+                int(e.get("malicious_process", False)),
+                float(e.get("duration_sec", 0))
+            ])
+        except:
+            continue
+    return np.array(features)
 
-MODEL = load_model()
 
-def anomaly_score(features: list) -> float:
-    score = MODEL.decision_function([features])[0]
-    normalized = min(max(-score * 50, 0), 100)
-    return normalized
+# ---------------- TRAIN MODEL ---------------- #
+def train_model(events):
+    global model
+
+    if len(events) < 50:
+        return
+
+    X = extract_features(events)
+
+    if len(X) == 0:
+        return
+
+    try:
+        new_model = IsolationForest(contamination=0.1)
+        new_model.fit(X)
+
+        with lock:
+            model = new_model
+
+        print(f"✅ Model updated with {len(events)} events")
+
+    except Exception as e:
+        print(f"❌ Training error: {e}")
+
+
+# ---------------- REAL-TIME TRAINER ---------------- #
+def realtime_trainer():
+    global events_buffer
+
+    while True:
+        time.sleep(10)
+
+        if len(events_buffer) > 50:
+            train_model(events_buffer.copy())
+
+            # 🔥 Prevent memory overflow
+            if len(events_buffer) > 1000:
+                events_buffer = events_buffer[-500:]
+
+
+# ---------------- PREDICT ---------------- #
+def predict(event):
+    global model
+
+    if model is None:
+        return 0  # model not ready
+
+    try:
+        X = extract_features([event])
+
+        if len(X) == 0:
+            return 0
+
+        with lock:
+            score = model.decision_function(X)[0]
+
+        return float(score)
+
+    except Exception as e:
+        print(f"❌ Prediction error: {e}")
+        return 0
