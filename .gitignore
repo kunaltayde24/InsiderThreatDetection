@@ -1,2 +1,7 @@
 agent/agent.log
 *.log
+__pycache__/
+*.pyc
+*.log
+*.csv
+.env    
