@@ -64,7 +64,6 @@ def add_event(data):
 
 def send_event_batch():
     global event_queue
-
     if not event_queue:
         return
 
